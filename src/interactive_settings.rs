@@ -1,11 +1,9 @@
-use std::io;
 use rusb::{DeviceHandle, GlobalContext};
+use std::io;
 
 use crate::protocol;
 
-
-
-pub fn set_interactive_settings(handle:&DeviceHandle<GlobalContext>) {
+pub fn set_interactive_settings(handle: &DeviceHandle<GlobalContext>) {
     let mut answer = String::new();
     print!("what dpi do you want followed by the number for polling rate?");
 
