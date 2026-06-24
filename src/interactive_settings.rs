@@ -1,27 +1,63 @@
-use rusb::{DeviceHandle, GlobalContext};
-use std::io;
-
 use crate::protocol;
+use rusb::{DeviceHandle, GlobalContext};
+use std::{env, fs::OpenOptions, io::Read};
 
-pub fn set_interactive_settings(handle: &DeviceHandle<GlobalContext>) {
-    let mut answer = String::new();
-    print!("what dpi do you want followed by the number for polling rate?");
+pub static REST: &str = "/.config/razer-h";
 
-    io::stdin().read_line(&mut answer).unwrap();
+pub fn set_interactive_settings(handle: &DeviceHandle<GlobalContext>) -> rusb::Result<()> {
+    let mut info = Info {
+        dpi: None,
+        poll_rate: None,
+    };
 
-    answer = answer.trim().to_string();
+    verify_n_read_file(&mut info);
 
-    //vector to store the choices
-    let mut choices = vec![];
-
-    //colletct the args
-    for word in answer.split_whitespace() {
-        choices.push(word);
+    if info.dpi.is_none() {
+        info.dpi = Some(1600);
     }
 
-    let dpi: u16 = choices[0].parse().unwrap();
-    let poll: u16 = choices[1].parse().unwrap();
+    if info.poll_rate.is_none() {
+        info.poll_rate = Some(8000);
+    }
 
-    protocol::set_dpi_settings(dpi, handle);
-    protocol::set_onboard_polling(poll, handle);
+    protocol::set_dpi_settings(info.dpi.unwrap(), handle)?;
+    protocol::set_onboard_polling(info.poll_rate.unwrap(), handle)
+}
+
+pub struct Info {
+    pub poll_rate: Option<u16>,
+    pub dpi: Option<u16>,
+}
+
+fn verify_n_read_file(config: &mut Info) {
+    let home = env::var("HOME").unwrap();
+
+    let mut final_ = home;
+    final_.push_str(REST);
+
+    let file = OpenOptions::new().read(true).create(false).open(final_);
+
+    let mut file = match file {
+        Ok(v) => v,
+        Err(_) => return,
+    };
+
+    let mut contents = String::new();
+    file.read_to_string(&mut contents).unwrap();
+
+    for line in contents.lines() {
+        let Some((option, value)) = line.split_once("=") else {
+            continue;
+        };
+
+        match option {
+            "poll_rate" => {
+                config.poll_rate = value.trim().parse().ok();
+            }
+            "dpi" => {
+                config.dpi = value.trim().parse().ok();
+            }
+            _ => {}
+        }
+    }
 }

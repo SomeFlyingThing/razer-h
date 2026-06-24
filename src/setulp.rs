@@ -1,68 +1,29 @@
-use std::{self, io};
+use rusb::{Device, GlobalContext};
 
-use rusb::GlobalContext;
-use rusb::{Context, DeviceHandle, UsbContext};
+const RAZER_VENDOR_ID: u16 = 0x1532;
 
-fn list_devices() {
-    let context = Context::new().unwrap();
+const RAZER_PRODUCT_ID_WIRED: u16 = 0x00c0;
+const RAZER_PRODUCT_ID_WIRELESS: u16 = 0x00c1;
 
-    let devices = context.devices().unwrap();
-
-    for device in devices.iter() {
-        let desc = device.device_descriptor().unwrap();
-        let handle = device.open().unwrap();
-
-        let serial = handle.read_serial_number_string_ascii(&desc).unwrap();
-        let product = handle.read_product_string_ascii(&desc).unwrap();
-
-        println!("serial number of {} is {}", product, serial);
-    }
-}
-
-fn get_info(wanted_serial: &str) -> rusb::Result<DeviceHandle<GlobalContext>> {
-    let devices = rusb::devices()?;
-
-    for device in devices.iter() {
-        let desc = device.device_descriptor()?;
-
-        let handle = match device.open() {
-            Ok(h) => h,
+pub fn get_device() -> Option<Device<GlobalContext>> {
+    let context = rusb::devices().unwrap();
+    for device in context.iter() {
+        let desc = match device.device_descriptor() {
+            Ok(v) => v,
             Err(_) => continue,
         };
 
-        let serial = handle
-            .read_serial_number_string_ascii(&desc)
-            .unwrap_or_default();
-
-        if serial == wanted_serial {
-            return Ok(handle);
-        }
-    }
-
-    Err(rusb::Error::NoDevice)
-}
-
-pub fn set_up() -> DeviceHandle<GlobalContext> {
-    loop {
-        list_devices();
-
-        let mut serial_num = String::new();
-        println!("what is your device serial number?");
-        io::stdin().read_line(&mut serial_num).unwrap();
-        let serial_num = serial_num.trim();
-
-        if serial_num.len() < 1 {
+        if desc.vendor_id() != RAZER_VENDOR_ID {
             continue;
         }
 
-        match get_info(serial_num) {
-            Ok(h) => return h,
-            Err(rusb::Error::NoDevice) => {
-                //clear the screen
-                print!("\x1B[2J\x1B[1;1H");
-                continue;
-            }
-            Err(_) => panic!("idk"),
+        if !matches!(
+            desc.product_id(),
+            RAZER_PRODUCT_ID_WIRED | RAZER_PRODUCT_ID_WIRELESS
+        ) {
+            continue;
         }
+        return Some(device);
     }
+    None
 }

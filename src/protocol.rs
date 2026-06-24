@@ -1,7 +1,3 @@
-use rusb;
-use std;
-
-#[repr(C)]
 pub struct RazerReport {
     pub status: u8,
     pub transaction_id: u8,
@@ -22,7 +18,7 @@ pub struct RazerReport {
 fn make_set_dpi_report(dpi: u16) -> RazerReport {
     let mut report = RazerReport {
         status: 0x00,
-        transaction_id: 0x1f,
+        transaction_id: 0x3f,
         remaining_packets: 0x0000,
         protocol_type: 0x00,
 
@@ -38,7 +34,7 @@ fn make_set_dpi_report(dpi: u16) -> RazerReport {
 
     let [hi, lo] = dpi.to_be_bytes();
 
-    report.arguments[0] = 0x01; // VARSTORE
+    report.arguments[0] = 0x00; // first DPI stage
     report.arguments[1] = hi; // X DPI high byte
     report.arguments[2] = lo; // X DPI low byte
     report.arguments[3] = hi; // Y DPI high byte
@@ -53,7 +49,16 @@ use rusb::{DeviceHandle, GlobalContext};
 use std::time::Duration;
 
 fn send_report(handle: &DeviceHandle<GlobalContext>, report: &mut RazerReport) -> rusb::Result<()> {
-    let bytes: &mut [u8; 90] = unsafe { std::mem::transmute(report) };
+    let mut bytes = [0u8; 90];
+
+    bytes[0] = report.status;
+    bytes[1] = report.transaction_id;
+    bytes[2..4].copy_from_slice(&report.remaining_packets.to_be_bytes());
+    bytes[4] = report.protocol_type;
+    bytes[5] = report.data_size;
+    bytes[6] = report.command_class;
+    bytes[7] = report.command_id;
+    bytes[8..88].copy_from_slice(&report.arguments);
 
     // compute XOR checksum
     let mut crc = 0u8;
@@ -62,15 +67,17 @@ fn send_report(handle: &DeviceHandle<GlobalContext>, report: &mut RazerReport) -
         crc ^= *b;
     }
 
-    bytes[88] = crc;
+    report.crc = crc;
+    bytes[88] = report.crc;
+    bytes[89] = report.reserved;
 
     // HID SET_REPORT
     handle.write_control(
         0x21,   // request type
         0x09,   // HID_REQ_SET_REPORT
         0x0300, // value
-        0x0000, // index
-        bytes,
+        0x0002, // HID interface index used by most Razer devices
+        &bytes,
         Duration::from_secs(1),
     )?;
 
@@ -110,18 +117,18 @@ fn make_set_polling_report(rate: u16, arg0: u8) -> RazerReport {
     report
 }
 
-pub fn set_onboard_polling(poll: u16, handle: &DeviceHandle<GlobalContext>) {
+pub fn set_onboard_polling(poll: u16, handle: &DeviceHandle<GlobalContext>) -> rusb::Result<()> {
     let mut report = make_set_polling_report(poll, 0x00);
 
-    send_report(&handle, &mut report).unwrap();
+    send_report(handle, &mut report)?;
 
     let mut report = make_set_polling_report(poll, 0x01);
 
-    send_report(&handle, &mut report).unwrap();
+    send_report(handle, &mut report)
 }
 
-pub fn set_dpi_settings(dpi: u16, handle: &DeviceHandle<GlobalContext>) {
+pub fn set_dpi_settings(dpi: u16, handle: &DeviceHandle<GlobalContext>) -> rusb::Result<()> {
     let mut report = make_set_dpi_report(dpi);
 
-    send_report(handle, &mut report).unwrap();
+    send_report(handle, &mut report)
 }
