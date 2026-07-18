@@ -15,7 +15,7 @@ pub struct RazerReport {
     pub reserved: u8,
 }
 
-fn make_set_dpi_report(dpi: u16) -> RazerReport {
+const fn make_set_dpi_report(dpi: u16) -> RazerReport {
     let mut report = RazerReport {
         status: 0x00,
         transaction_id: 0x3f,
@@ -84,16 +84,22 @@ fn send_report(handle: &DeviceHandle<GlobalContext>, report: &mut RazerReport) -
     Ok(())
 }
 
-fn make_set_polling_report(rate: u16, arg0: u8) -> RazerReport {
-    let code = match rate {
-        8000 => 0x01,
-        4000 => 0x02,
-        2000 => 0x04,
-        1000 => 0x08,
-        500 => 0x10,
-        250 => 0x20,
-        125 => 0x40,
-        _ => 0x10, // default 500
+const fn polling_rate_code(rate: u16) -> Option<u8> {
+    match rate {
+        8000 => Some(0x01),
+        4000 => Some(0x02),
+        2000 => Some(0x04),
+        1000 => Some(0x08),
+        500 => Some(0x10),
+        250 => Some(0x20),
+        125 => Some(0x40),
+        _ => None,
+    }
+}
+
+const fn make_set_polling_report(rate: u16, arg0: u8) -> Option<RazerReport> {
+    let Some(code) = polling_rate_code(rate) else {
+        return None;
     };
 
     let mut report = RazerReport {
@@ -114,15 +120,19 @@ fn make_set_polling_report(rate: u16, arg0: u8) -> RazerReport {
     report.arguments[0] = arg0;
     report.arguments[1] = code;
 
-    report
+    Some(report)
 }
 
 pub fn set_onboard_polling(poll: u16, handle: &DeviceHandle<GlobalContext>) -> rusb::Result<()> {
-    let mut report = make_set_polling_report(poll, 0x00);
+    let Some(mut report) = make_set_polling_report(poll, 0x00) else {
+        return Err(rusb::Error::InvalidParam);
+    };
 
     send_report(handle, &mut report)?;
 
-    let mut report = make_set_polling_report(poll, 0x01);
+    let Some(mut report) = make_set_polling_report(poll, 0x01) else {
+        return Err(rusb::Error::InvalidParam);
+    };
 
     send_report(handle, &mut report)
 }
@@ -131,4 +141,40 @@ pub fn set_dpi_settings(dpi: u16, handle: &DeviceHandle<GlobalContext>) -> rusb:
     let mut report = make_set_dpi_report(dpi);
 
     send_report(handle, &mut report)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn accepts_supported_poll_rates_including_max_8000() {
+        let cases = [
+            (125, 0x40),
+            (250, 0x20),
+            (500, 0x10),
+            (1000, 0x08),
+            (2000, 0x04),
+            (4000, 0x02),
+            (8000, 0x01),
+        ];
+
+        for (rate, expected_code) in cases {
+            let report = make_set_polling_report(rate, 0x01).unwrap();
+
+            assert_eq!(report.arguments[0], 0x01);
+            assert_eq!(report.arguments[1], expected_code);
+        }
+    }
+
+    #[test]
+    fn rejects_unsupported_poll_rates_instead_of_silently_falling_back() {
+        for rate in [0, 1, 124, 126, 499, 501, 7999, 8001, u16::MAX] {
+            assert!(polling_rate_code(rate).is_none(), "{rate} should be invalid");
+            assert!(
+                make_set_polling_report(rate, 0x00).is_none(),
+                "{rate} should not build a report"
+            );
+        }
+    }
 }
